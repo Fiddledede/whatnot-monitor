@@ -3,7 +3,7 @@ import sys
 import requests
 
 # Configuration
-WHATNOT_USERNAME = "THE_SELLER_USERNAME_HERE"  # <-- Replace with their exact username
+WHATNOT_USERNAME = "drexs_emporium"  # <-- Replace with their exact username
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 # Status tracking file
