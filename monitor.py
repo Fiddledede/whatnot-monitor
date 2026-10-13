@@ -171,7 +171,7 @@ def main():
             if show_id in announced:
                 continue
             show_url = f"https://www.whatnot.com/live/{show_id}"
-            post_discord(f"🔴 **{user}** has just gone live!\n{show_url}")
+            post_discord(f"🔴 @everyone **{user}** has just gone live!\n{show_url}")
             print(f"[{user}] Announced {show_url}")
             announced.append(show_id)
             changed = True
