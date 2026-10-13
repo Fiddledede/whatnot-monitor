@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+import re
 
 # Configuration
 WHATNOT_USERNAME = "drexs_emporium"  # <-- Replace with their exact username
@@ -20,41 +21,41 @@ def save_current_status(is_live):
         f.write(str(is_live))
 
 def check_whatnot_live():
-    # Target Whatnot's public backend gateway
-    url = "https://whatnot.com"
+    url = f"https://whatnot.com{WHATNOT_USERNAME}"
     
-    # Payload targeting the specific user's public info
-    payload = {
-        "query": """
-        query getUserPublicInfo(\$username: String!) {
-            userPublicInfo(username: \$username) {
-                user {
-                    username
-                    isLive
-                }
-            }
-        }
-        """,
-        "variables": {"username": WHATNOT_USERNAME}
-    }
-    
+    # Simulating a realistic web browser to request the raw text content
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Content-Type": "application/json"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # Extract the native true/false live status from Whatnot's database response
-            is_live = data.get("data", {}).get("userPublicInfo", {}).get("user", {}).get("isLive", False)
-            print(f"API Check Result for {WHATNOT_USERNAME}: isLive = {is_live}")
-            return is_live
-        else:
-            print(f"API error: Received status code {response.status_code}")
+        response = requests.get(url, headers=headers, timeout=15)
+        html_content = response.text
+        
+        # When live, Whatnot embeds specific JSON payloads and raw HTML image state flags
+        # such as '"isActiveLiveStream":true' or specific avatar wrapper configurations
+        if '"isActiveLiveStream":true' in html_content or '"isLive":true' in html_content:
+            return True
+            
+        # Alternative fallback: scan the profile's text payload directly for stream markers
+        live_markers = [
+            'status":"LIVE"',
+            'avatar-live-border',
+            'badges/live.svg',
+            '"liveStatus":"LIVE"'
+        ]
+        
+        for marker in live_markers:
+            if marker in html_content:
+                return True
+                
     except Exception as e:
-        print(f"Error checking API: {e}")
+        print(f"Scraper error encountered: {e}")
+        
     return False
 
 def send_discord_alert(is_test=False):
@@ -64,27 +65,29 @@ def send_discord_alert(is_test=False):
         }
     else:
         payload = {
-            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: https://www.whatnot.com/user/{WHATNOT_USERNAME}"
+            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: https://whatnot.com{WHATNOT_USERNAME}"
         }
     requests.post(WEBHOOK_URL, json=payload)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
+    if len(sys.argv) > 1 and sys.argv == "test":
         print("Running manual test notification...")
         send_discord_alert(is_test=True)
         sys.exit(0)
 
     currently_live = check_whatnot_live()
     previously_live = get_previous_status()
+    
+    print(f"Current scan state: {currently_live} | Previous scan state: {previously_live}")
 
     if currently_live and not previously_live:
-        print("Seller just went live! Sending alert.")
+        print("Change detected: Seller just went live! Sending Discord message.")
         send_discord_alert()
     elif currently_live and previously_live:
-        print("Seller is still live. Skipping duplicate alert.")
+        print("Seller is still live. Skipping message to avoid spam.")
     elif not currently_live and previously_live:
-        print("Seller went offline. Updating status.")
+        print("Seller went offline. Resetting status file tracker.")
     else:
-        print("Seller is offline.")
+        print("Seller remains offline. No action taken.")
 
     save_current_status(currently_live)
