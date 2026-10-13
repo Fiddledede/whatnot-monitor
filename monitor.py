@@ -6,8 +6,8 @@ import requests
 WHATNOT_USERNAME = "drexs_emporium"
 # =======================================================
 
-# Target the specific /shows URL where live state tags are initially rendered
-TARGET_URL = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}/shows"
+# Target the user profile URL where the primary NextJS data array sits
+TARGET_URL = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}"
 DISCORD_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATUS_FILE = "live_status.txt"
 
@@ -35,11 +35,16 @@ def check_whatnot_live():
         print(f"Targeting URL: {TARGET_URL}")
         print(f"Server Connection Status: {response.status_code}")
         
-        # Scan for the physical live badges that appear when a show is actively broadcasting
-        if "live-badge" in html.lower() or "live" in html.lower() or "badges/live.svg" in html:
-            # Let's perform a safety check to ensure it's not picking up static words
-            if "live-badge" in html.lower() or "badges/live.svg" in html:
-                return True
+        # Check inside the raw background JSON data payload layout
+        # Whatnot populates "isLive":true inside their background __NEXT_DATA__ profile variables
+        if '"islive":true' in html.lower() or '"is_live":true' in html.lower() or '"isactivelivestream":true' in html.lower():
+            print("Detected live broadcast parameters inside backend dataset.")
+            return True
+            
+        # Alternate layout scan for live streaming blocks
+        if '"livestatus":"live"' in html.lower() or 'status":"live"' in html.lower():
+            print("Detected live string state tokens inside data stream.")
+            return True
                 
     except Exception as e:
         print(f"Network error encountered: {e}")
@@ -47,7 +52,7 @@ def check_whatnot_live():
     return False
 
 def send_discord_alert(is_test=False):
-    profile_url = f"https://www.whatnot.com/user/{WHATNOT_USERNAME}"
+    profile_url = f"https://whatnot.com{WHATNOT_USERNAME}"
     if is_test:
         payload = {
             "content": f"✅ **Ping Test Successful!** Your Discord Webhook configuration is working correctly for `{WHATNOT_USERNAME}`."
