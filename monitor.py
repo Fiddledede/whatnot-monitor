@@ -21,7 +21,7 @@ def save_current_status(is_live):
         f.write(str(is_live))
 
 def check_whatnot_live():
-    url = f"https://whatnot.com{WHATNOT_USERNAME}"
+    url = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}"
     
     # Simulating a realistic web browser to request the raw text content
     headers = {
