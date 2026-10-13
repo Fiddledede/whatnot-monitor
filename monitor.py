@@ -4,7 +4,7 @@ import requests
 import re
 
 # Configuration
-WHATNOT_USERNAME = "drexs_emporium"  # <-- Replace with their exact username
+WHATNOT_USERNAME = "drexs_emporium"  
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 # Status tracking file
@@ -21,56 +21,53 @@ def save_current_status(is_live):
         f.write(str(is_live))
 
 def check_whatnot_live():
-    url = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}"
+    # Target the direct web portal locale URL layout safely
+    url = f"https://whatnot.com{WHATNOT_USERNAME}"
     
-    # Simulating a realistic web browser to request the raw text content
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
     }
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        html_content = response.text
+        html = response.text
         
-        # When live, Whatnot embeds specific JSON payloads and raw HTML image state flags
-        # such as '"isActiveLiveStream":true' or specific avatar wrapper configurations
-        if '"isActiveLiveStream":true' in html_content or '"isLive":true' in html_content:
+        # Log basic debug data to the actions panel
+        print(f"Server Response Code: {response.status_code}")
+        
+        # Method 1: Look for exact case-insensitive raw boolean keys in backend script text blocks
+        if '"islive":true' in html.lower() or '"is_live":true' in html.lower() or '"isactivelivestream":true' in html.lower():
+            print("Found explicit true state flag in backend data frame.")
             return True
             
-        # Alternative fallback: scan the profile's text payload directly for stream markers
-        live_markers = [
-            'status":"LIVE"',
-            'avatar-live-border',
-            'badges/live.svg',
-            '"liveStatus":"LIVE"'
-        ]
-        
-        for marker in live_markers:
-            if marker in html_content:
-                return True
-                
+        # Method 2: Check for live badges or streaming media indicator hooks 
+        if 'badges/live.svg' in html or 'live-badge' in html.lower() or '"status":"live"' in html.lower():
+            print("Found visual asset badge matching live states.")
+            return True
+            
     except Exception as e:
         print(f"Scraper error encountered: {e}")
         
     return False
 
 def send_discord_alert(is_test=False):
+    # Formatted to create a clean clickable link structure for the end-user
+    profile_url = f"https://whatnot.com{WHATNOT_USERNAME}"
+    
     if is_test:
         payload = {
             "content": f"✅ **Ping Test Successful!** Your Discord Webhook is configured correctly for monitoring `{WHATNOT_USERNAME}`."
         }
     else:
         payload = {
-            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: https://whatnot.com{WHATNOT_USERNAME}"
+            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: {profile_url}"
         }
     requests.post(WEBHOOK_URL, json=payload)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv == "test":
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
         print("Running manual test notification...")
         send_discord_alert(is_test=True)
         sys.exit(0)
