@@ -1,87 +1,186 @@
+"""
+Whatnot -> Discord live monitor.
+
+Checks each Whatnot username's profile page, and when a show is live that we
+haven't announced yet, posts "[user] has just gone live!" plus the show link
+to a Discord webhook. Already-announced show IDs are kept in state.json so
+each show is only announced once.
+
+Settings come from environment variables (set in GitHub, not in this file):
+  DISCORD_WEBHOOK_URL  - your Discord webhook (GitHub secret)
+  WHATNOT_USERS        - comma-separated usernames, e.g. "seller1,seller2"
+  TEST_MESSAGE         - "true" to just send a test message and stop
+"""
+
+import json
 import os
+import re
 import sys
-import requests
+import urllib.error
+import urllib.request
 
-# ==================== CONFIGURATION ====================
-WHATNOT_USERNAME = "drexs_emporium"
-# =======================================================
+WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+USERS = [u.strip().lstrip("@") for u in os.environ.get("WHATNOT_USERS", "").split(",") if u.strip()]
+TEST = os.environ.get("TEST_MESSAGE", "").lower() == "true"
+STATE_FILE = "state.json"
 
-# Target the user profile URL where the primary NextJS data array sits
-TARGET_URL = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}"
-DISCORD_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-STATUS_FILE = "live_status.txt"
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/129.0 Safari/537.36")
+UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+# Status values that mean "on air right now". Scheduled/upcoming shows use
+# other values (e.g. CREATED), so they are ignored.
+LIVE_STATUSES = {"PLAYING", "LIVE", "STARTED", "IN_PROGRESS", "ACTIVE"}
 
-def get_previous_status():
-    if os.path.exists(STATUS_FILE):
-        with open(STATUS_FILE, "r") as f:
-            return f.read().strip() == "True"
-    return False
 
-def save_current_status(is_live):
-    with open(STATUS_FILE, "w") as f:
-        f.write(str(is_live))
+def fetch(url):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-GB,en;q=0.9",
+    })
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read().decode("utf-8", "replace")
 
-def check_whatnot_live():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-GB,en;q=0.9"
-    }
-    
+
+def _enclosing_object(text, pos):
+    """Return (start, end) of the JSON object that contains position pos."""
+    depth, start = 0, -1
+    for i in range(pos, -1, -1):
+        c = text[i]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                start = i
+                break
+            depth -= 1
+    if start < 0:
+        return None
+    depth = 0
+    for j in range(start, min(len(text), start + 200000)):
+        c = text[j]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return start, j + 1
+    return None
+
+
+def _own_id(text, span):
+    """The show's own "id" - the one directly inside its object, not a nested one."""
+    start, end = span
+    depth = 0
+    i = start
+    id_re = re.compile(r'"id"\s*:\s*"(' + UUID + r')"')
+    while i < end:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif depth == 1 and text.startswith('"id"', i):
+            m = id_re.match(text, i)
+            if m:
+                return m.group(1).lower()
+        i += 1
+    return None
+
+
+def find_live_shows(html):
+    """Return (set of live show IDs, set of all status values seen)."""
+    # Page data is often embedded as escaped JSON inside <script> tags.
+    text = html.replace('\\"', '"').replace("\\/", "/")
+    live, seen = set(), set()
+
+    markers = []
+    for m in re.finditer(r'"status"\s*:\s*"([A-Za-z_]+)"', text):
+        status = m.group(1).upper()
+        seen.add(status)
+        if status in LIVE_STATUSES:
+            markers.append(m.start())
+    # Fallback for pages that mark live shows with a boolean instead.
+    markers += [m.start() for m in re.finditer(r'"isLive"\s*:\s*true', text)]
+
+    for pos in markers:
+        span = _enclosing_object(text, pos)
+        if span:
+            show_id = _own_id(text, span)
+            if show_id:
+                live.add(show_id)
+
+    return live, seen
+
+
+def post_discord(content):
+    data = json.dumps({"content": content}).encode()
+    req = urllib.request.Request(WEBHOOK, data=data, headers={
+        "Content-Type": "application/json", "User-Agent": "whatnot-live-monitor"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.status
+
+
+def load_state():
     try:
-        response = requests.get(TARGET_URL, headers=headers, timeout=15)
-        html = response.text
-        
-        print(f"Targeting URL: {TARGET_URL}")
-        print(f"Server Connection Status: {response.status_code}")
-        
-        # Check inside the raw background JSON data payload layout
-        # Whatnot populates "isLive":true inside their background __NEXT_DATA__ profile variables
-        if '"islive":true' in html.lower() or '"is_live":true' in html.lower() or '"isactivelivestream":true' in html.lower():
-            print("Detected live broadcast parameters inside backend dataset.")
-            return True
-            
-        # Alternate layout scan for live streaming blocks
-        if '"livestatus":"live"' in html.lower() or 'status":"live"' in html.lower():
-            print("Detected live string state tokens inside data stream.")
-            return True
-                
-    except Exception as e:
-        print(f"Network error encountered: {e}")
-        
-    return False
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
-def send_discord_alert(is_test=False):
-    profile_url = f"https://whatnot.com{WHATNOT_USERNAME}"
-    if is_test:
-        payload = {
-            "content": f"✅ **Ping Test Successful!** Your Discord Webhook configuration is working correctly for `{WHATNOT_USERNAME}`."
-        }
-    else:
-        payload = {
-            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: {profile_url}"
-        }
-    requests.post(DISCORD_URL, json=payload)
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def main():
+    if not WEBHOOK:
+        sys.exit("DISCORD_WEBHOOK_URL is not set - add it as a repository secret.")
+
+    if TEST:
+        post_discord("✅ Whatnot live monitor is connected and working.")
+        print("Test message sent.")
+        return
+
+    if not USERS:
+        sys.exit("WHATNOT_USERS is not set - add it as a repository variable.")
+
+    state = load_state()
+    changed = False
+
+    for user in USERS:
+        url = f"https://www.whatnot.com/user/{user}"
+        try:
+            html = fetch(url)
+        except urllib.error.HTTPError as e:
+            print(f"[{user}] Could not load profile (HTTP {e.code}). Skipping.")
+            continue
+        except Exception as e:  # network hiccup - try again next run
+            print(f"[{user}] Could not load profile ({e}). Skipping.")
+            continue
+
+        live_ids, seen = find_live_shows(html)
+        link_count = len(set(re.findall(r"/live/(" + UUID + ")", html)))
+        print(f"[{user}] page {len(html)} chars | show links: {link_count} | "
+              f"statuses seen: {sorted(seen) or 'none'} | live now: {sorted(live_ids) or 'none'}")
+
+        announced = state.get(user, [])
+        for show_id in sorted(live_ids):
+            if show_id in announced:
+                continue
+            show_url = f"https://www.whatnot.com/live/{show_id}"
+            post_discord(f"🔴 **{user}** has just gone live!\n{show_url}")
+            print(f"[{user}] Announced {show_url}")
+            announced.append(show_id)
+            changed = True
+
+        state[user] = announced[-25:]  # keep the file small
+
+    if changed or not os.path.exists(STATE_FILE):
+        save_state(state)
+
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv == "test":
-        print("Running manual test notification...")
-        send_discord_alert(is_test=True)
-        sys.exit(0)
-
-    currently_live = check_whatnot_live()
-    previously_live = get_previous_status()
-    
-    print(f"Current scan state: {currently_live} | Previous scan state: {previously_live}")
-
-    if currently_live and not previously_live:
-        print("Change detected: Seller just went live! Sending Discord message.")
-        send_discord_alert()
-    elif currently_live and previously_live:
-        print("Seller is still live. Skipping message to avoid spam.")
-    elif not currently_live and previously_live:
-        print("Seller went offline. Resetting status file tracker.")
-    else:
-        print("Seller remains offline. No action taken.")
-
-    save_current_status(currently_live)
+    main()
