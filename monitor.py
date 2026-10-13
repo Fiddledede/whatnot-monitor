@@ -2,8 +2,12 @@ import os
 import sys
 import requests
 
-# Hardcoded exact target URL to guarantee no string joining bugs occur
-TARGET_URL = "https://www.whatnot.com/en-GB/user/drexs_emporium/shows"
+# ==================== CONFIGURATION ====================
+WHATNOT_USERNAME = "drexs_emporium"
+# =======================================================
+
+# Target the specific /shows URL where live state tags are initially rendered
+TARGET_URL = f"https://www.whatnot.com/en-GB/user/{WHATNOT_USERNAME}/shows"
 DISCORD_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATUS_FILE = "live_status.txt"
 
@@ -21,36 +25,36 @@ def check_whatnot_live():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5"
+        "Accept-Language": "en-GB,en;q=0.9"
     }
     
     try:
         response = requests.get(TARGET_URL, headers=headers, timeout=15)
         html = response.text
         
+        print(f"Targeting URL: {TARGET_URL}")
         print(f"Server Connection Status: {response.status_code}")
         
-        # Checking backend parameters for explicit live truth values
-        if '"islive":true' in html.lower() or '"is_live":true' in html.lower() or '"isactivelivestream":true' in html.lower():
-            return True
-            
-        # Checking visual asset badge allocations 
-        if 'badges/live.svg' in html or 'live-badge' in html.lower() or '"status":"live"' in html.lower():
-            return True
-            
+        # Scan for the physical live badges that appear when a show is actively broadcasting
+        if "live-badge" in html.lower() or "live" in html.lower() or "badges/live.svg" in html:
+            # Let's perform a safety check to ensure it's not picking up static words
+            if "live-badge" in html.lower() or "badges/live.svg" in html:
+                return True
+                
     except Exception as e:
-        print(f"Network error encountered during download: {e}")
+        print(f"Network error encountered: {e}")
         
     return False
 
 def send_discord_alert(is_test=False):
+    profile_url = f"https://www.whatnot.com/user/{WHATNOT_USERNAME}"
     if is_test:
         payload = {
-            "content": "✅ **Ping Test Successful!** Your Discord Webhook configuration is working correctly."
+            "content": f"✅ **Ping Test Successful!** Your Discord Webhook configuration is working correctly for `{WHATNOT_USERNAME}`."
         }
     else:
         payload = {
-            "content": f"🚨 **drexs_emporium is LIVE on Whatnot!** 🚨\nCheck out the show here: {TARGET_URL}"
+            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: {profile_url}"
         }
     requests.post(DISCORD_URL, json=payload)
 
