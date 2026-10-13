@@ -3,7 +3,7 @@ import sys
 import requests
 
 # Configuration
-WHATNOT_USERNAME = "drexs_emporium"  # <-- Replace with their exact username
+WHATNOT_USERNAME = "THE_SELLER_USERNAME_HERE"  # <-- Replace with their exact username
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 # Status tracking file
@@ -20,17 +20,41 @@ def save_current_status(is_live):
         f.write(str(is_live))
 
 def check_whatnot_live():
-    url = f"https://whatnot.com{WHATNOT_USERNAME}"
+    # Target Whatnot's public backend gateway
+    url = "https://whatnot.com"
+    
+    # Payload targeting the specific user's public info
+    payload = {
+        "query": """
+        query getUserPublicInfo(\$username: String!) {
+            userPublicInfo(username: \$username) {
+                user {
+                    username
+                    isLive
+                }
+            }
+        }
+        """,
+        "variables": {"username": WHATNOT_USERNAME}
+    }
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type": "application/json"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if '"isLive":true' in response.text or 'live-badge' in response.text.lower():
-            return True
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # Extract the native true/false live status from Whatnot's database response
+            is_live = data.get("data", {}).get("userPublicInfo", {}).get("user", {}).get("isLive", False)
+            print(f"API Check Result for {WHATNOT_USERNAME}: isLive = {is_live}")
+            return is_live
+        else:
+            print(f"API error: Received status code {response.status_code}")
     except Exception as e:
-        print(f"Error checking page: {e}")
+        print(f"Error checking API: {e}")
     return False
 
 def send_discord_alert(is_test=False):
@@ -40,18 +64,16 @@ def send_discord_alert(is_test=False):
         }
     else:
         payload = {
-            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: https://whatnot.com{WHATNOT_USERNAME}"
+            "content": f"🚨 **{WHATNOT_USERNAME} is LIVE on Whatnot!** 🚨\nCheck out the show here: https://www.whatnot.com/user/{WHATNOT_USERNAME}"
         }
     requests.post(WEBHOOK_URL, json=payload)
 
 if __name__ == "__main__":
-    # Check if we are running a manual test notification
     if len(sys.argv) > 1 and sys.argv[1] == "test":
         print("Running manual test notification...")
         send_discord_alert(is_test=True)
         sys.exit(0)
 
-    # Normal monitoring logic
     currently_live = check_whatnot_live()
     previously_live = get_previous_status()
 
@@ -65,5 +87,4 @@ if __name__ == "__main__":
     else:
         print("Seller is offline.")
 
-    # Save status for the next 10-minute check
     save_current_status(currently_live)
