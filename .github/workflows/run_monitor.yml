@@ -2,7 +2,7 @@ name: Whatnot Live Monitor
 
 on:
   schedule:
-    # This triggers the script every 10 minutes (GitHub's free cron schedule)
+    # Triggers the script every 10 minutes
     - cron: '*/10 * * * *'
   workflow_dispatch: # Allows you to manually trigger it via GitHub to test it
 
@@ -16,7 +16,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-node-version: '3.10'
+        python-version: '3.10' # Fixed the typo from python-node-version
 
     - name: Install Dependencies
       run: pip install requests
