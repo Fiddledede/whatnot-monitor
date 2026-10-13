@@ -3,7 +3,7 @@ import sys
 import requests
 
 # Hardcoded exact target URL to guarantee no string joining bugs occur
-TARGET_URL = "https://www.whatnot.com/en-GB/user/drexs_emporium"
+TARGET_URL = "https://www.whatnot.com/en-GB/user/drexs_emporium/shows"
 DISCORD_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATUS_FILE = "live_status.txt"
 
